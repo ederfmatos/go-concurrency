@@ -5,12 +5,13 @@ import (
 	"sync"
 )
 
-func ForEach[Item any](items []Item, concurrency int, function func(item Item) error) error {
+func ForEach[Item any, Response any](items []Item, concurrency int, function func(item Item) (Response, error)) ([]Response, error) {
 	var (
-		mutex = sync.Mutex{}
-		wg    = sync.WaitGroup{}
-		errs  = make([]error, 0)
-		ch    = make(chan struct{}, concurrency)
+		mutex     = sync.Mutex{}
+		wg        = sync.WaitGroup{}
+		errs      = make([]error, 0)
+		ch        = make(chan struct{}, concurrency)
+		responses = make([]Response, 0, 0)
 	)
 
 	wg.Add(len(items))
@@ -19,15 +20,18 @@ func ForEach[Item any](items []Item, concurrency int, function func(item Item) e
 			ch <- struct{}{}
 			defer wg.Done()
 
-			err := function(item)
-			if err == nil {
+			response, err := function(item)
+
+			mutex.Lock()
+			defer mutex.Unlock()
+
+			if err != nil {
+				errs = append(errs, err)
 				<-ch
 				return
 			}
 
-			mutex.Lock()
-			errs = append(errs, err)
-			mutex.Unlock()
+			responses = append(responses, response)
 			<-ch
 		}(item, &wg)
 	}
@@ -35,8 +39,8 @@ func ForEach[Item any](items []Item, concurrency int, function func(item Item) e
 	wg.Wait()
 
 	if len(errs) > 0 {
-		return errors.Join(errs...)
+		return nil, errors.Join(errs...)
 	}
 
-	return nil
+	return responses, nil
 }
